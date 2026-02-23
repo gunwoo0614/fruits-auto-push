@@ -1,0 +1,90 @@
+name: Fix choice[] then Commit & Build
+
+on:
+  push:
+
+permissions:
+  contents: write   # GITHUB_TOKEN으로 push 가능하게 함
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: true   # GITHUB_TOKEN credentials 유지
+          fetch-depth: 0              # push/commit에 유리
+
+      - name: Validate & Patch choice[] (choice-body only)
+        shell: pwsh
+        run: |
+          $valid = @("Apple","Banana","Orange","Grape","Peach")
+          $replacement = "Apple"
+          $file = "main.c"
+
+          $code = Get-Content -LiteralPath $file -Raw -Encoding UTF8
+
+          $pattern = '(?<pre>\bchoice\s*\[\s*\]\s*=\s*\{)(?<body>[\s\S]*?)(?<post>\}\s*;)'
+          $m = [regex]::Match($code, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+          if (-not $m.Success) {
+            Write-Host "ERROR: choice[] initializer not found in ${file}"
+            exit 1
+          }
+
+          $body = $m.Groups['body'].Value
+          $choices = [regex]::Matches($body, '"([^"\\]*(\\.[^"\\]*)*)"') | ForEach-Object { $_.Groups[1].Value }
+
+          $invalid = @()
+          foreach ($c in $choices) {
+            if ($valid -notcontains $c) { $invalid += $c }
+          }
+
+          if ($invalid.Count -gt 0) {
+            $invalidUnique = $invalid | Select-Object -Unique
+            Write-Host "Invalid choice words found in choice[]: $($invalidUnique -join ', ')"
+
+            $newBody = $body
+            foreach ($bad in $invalidUnique) {
+              $escaped = [regex]::Escape($bad)
+              $newBody = [regex]::Replace($newBody, '"' + $escaped + '"', '"' + $replacement + '"')
+            }
+
+            $before = $code.Substring(0, $m.Index)
+            $after  = $code.Substring($m.Index + $m.Length)
+            $newCode = $before + $m.Groups['pre'].Value + $newBody + $m.Groups['post'].Value + $after
+
+            Set-Content -LiteralPath $file -Value $newCode -NoNewline -Encoding UTF8
+            Write-Host "Patched ${file}: replaced invalid words with '$replacement' (choice[] body only)"
+          } else {
+            Write-Host "All choice[] words are valid. No patch needed."
+          }
+
+      - name: Commit & Push if changed
+        shell: pwsh
+        run: |
+          git status --porcelain
+
+          # 변경이 없으면 커밋/푸시 안 함
+          if (-not (git status --porcelain)) {
+            Write-Host "No changes to commit."
+            exit 0
+          }
+
+          # 커밋 작성자 설정
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add main.c
+          git commit -m "Auto-fix choice[] invalid words [skip ci]"
+          git push
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build
+        run: cl /nologo /W4 /EHsc main.c /Fe:main.exe
+
+      - name: Run
+        run: .\main.exe
