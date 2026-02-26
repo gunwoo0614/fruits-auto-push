@@ -6,7 +6,7 @@ int main(void)
         "Apple", "Banana", "Orange", "Grape", "Peach"
     };
     const char *choice[] = {
-        "Apple", "Apple", "Orange", "Apple", "Peach"
+        "Apple", "dog", "Orange", "car", "Peach"
     };
 
     // 그냥 출력만 (검사/치환 로직 없음)
